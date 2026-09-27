@@ -56,13 +56,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release download v0.1.16 --pattern SHA256SUMS.txt --dir .
+          gh release download v0.1.16 --repo Albert-AI-Technologies/releases --pattern SHA256SUMS.txt --dir .
           if [ "$PLATFORM" = mac-x64 ]; then
-            gh release upload v0.1.16 candidate/albert-studio-mac-x64.dmg candidate/albert-studio-mac-x64.zip --clobber
+            gh release upload v0.1.16 candidate/albert-studio-mac-x64.dmg candidate/albert-studio-mac-x64.zip --repo Albert-AI-Technologies/releases --clobber
           else
-            gh release upload v0.1.16 candidate/albert-studio-win-arm64.exe --clobber
+            gh release upload v0.1.16 candidate/albert-studio-win-arm64.exe --repo Albert-AI-Technologies/releases --clobber
           fi
           tr -d '\r' < candidate/SHA256SUMS.txt >> SHA256SUMS.txt
           sort -k2,2 -u SHA256SUMS.txt -o SHA256SUMS.txt
-          gh release upload v0.1.16 SHA256SUMS.txt --clobber
+          gh release upload v0.1.16 SHA256SUMS.txt --repo Albert-AI-Technologies/releases --clobber
           cat SHA256SUMS.txt
