@@ -4,12 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: Verified candidate to add to v0.1.16
+        description: Verified desktop candidate
         required: true
         type: choice
         options:
+          - mac-arm64
           - mac-x64
+          - win-x64
           - win-arm64
+      release_tag:
+        description: Draft release tag (for example v0.1.17)
+        required: true
+        type: string
       primary_sha256:
         description: DMG or Windows installer SHA-256
         required: true
@@ -22,6 +28,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: verified-artifact-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -31,6 +41,7 @@ jobs:
       PLATFORM: ${{ inputs.platform }}
       PRIMARY_SHA256: ${{ inputs.primary_sha256 }}
       ZIP_SHA256: ${{ inputs.zip_sha256 }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - name: Fetch and verify private build artifact
         shell: bash
@@ -39,30 +50,35 @@ jobs:
           test -n "$ARTIFACT_URL"
           [[ "$ARTIFACT_URL" =~ ^https://productionresultssa[0-9]+\.blob\.core\.windows\.net/actions-results/ ]]
           [[ "$PRIMARY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mkdir candidate
           curl --fail --location --silent --show-error --connect-timeout 10 --max-time 180 "$ARTIFACT_URL" -o candidate.zip
           unzip -q candidate.zip -d candidate
           cd candidate
-          if [ "$PLATFORM" = mac-x64 ]; then
+          if [[ "$PLATFORM" = mac-* ]]; then
             [[ "$ZIP_SHA256" =~ ^[0-9a-f]{64}$ ]]
-            printf '%s  %s\n' "$PRIMARY_SHA256" albert-studio-mac-x64.dmg "$ZIP_SHA256" albert-studio-mac-x64.zip | sha256sum -c -
-            diff -u SHA256SUMS.txt <(sha256sum albert-studio-mac-x64.dmg albert-studio-mac-x64.zip)
+            printf '%s  %s\n' "$PRIMARY_SHA256" "albert-studio-$PLATFORM.dmg" "$ZIP_SHA256" "albert-studio-$PLATFORM.zip" | sha256sum -c -
+            diff -u SHA256SUMS.txt <(sha256sum "albert-studio-$PLATFORM.dmg" "albert-studio-$PLATFORM.zip")
           else
-            printf '%s  %s\n' "$PRIMARY_SHA256" albert-studio-win-arm64.exe | sha256sum -c -
-            diff -u <(tr -d '\r' < SHA256SUMS.txt) <(sha256sum albert-studio-win-arm64.exe)
+            printf '%s  %s\n' "$PRIMARY_SHA256" "albert-studio-$PLATFORM.exe" | sha256sum -c -
+            diff -u <(tr -d '\r' < SHA256SUMS.txt) <(sha256sum "albert-studio-$PLATFORM.exe")
           fi
 
       - name: Publish verified assets and combined checksum manifest
         shell: bash
         run: |
           set -euo pipefail
-          gh release download v0.1.16 --repo Albert-AI-Technologies/releases --pattern SHA256SUMS.txt --dir .
-          if [ "$PLATFORM" = mac-x64 ]; then
-            gh release upload v0.1.16 candidate/albert-studio-mac-x64.dmg candidate/albert-studio-mac-x64.zip --repo Albert-AI-Technologies/releases --clobber
+          if ! gh release view "$RELEASE_TAG" --repo Albert-AI-Technologies/releases >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo Albert-AI-Technologies/releases --draft --title "Albert Studio $RELEASE_TAG" --notes "Unsigned direct-download desktop preview. Verify checksums before installing."
+          fi
+          gh release download "$RELEASE_TAG" --repo Albert-AI-Technologies/releases --pattern SHA256SUMS.txt --dir . 2>/dev/null || true
+          touch SHA256SUMS.txt
+          if [[ "$PLATFORM" = mac-* ]]; then
+            gh release upload "$RELEASE_TAG" "candidate/albert-studio-$PLATFORM.dmg" "candidate/albert-studio-$PLATFORM.zip" --repo Albert-AI-Technologies/releases --clobber
           else
-            gh release upload v0.1.16 candidate/albert-studio-win-arm64.exe --repo Albert-AI-Technologies/releases --clobber
+            gh release upload "$RELEASE_TAG" "candidate/albert-studio-$PLATFORM.exe" --repo Albert-AI-Technologies/releases --clobber
           fi
           tr -d '\r' < candidate/SHA256SUMS.txt >> SHA256SUMS.txt
           sort -k2,2 -u SHA256SUMS.txt -o SHA256SUMS.txt
-          gh release upload v0.1.16 SHA256SUMS.txt --repo Albert-AI-Technologies/releases --clobber
+          gh release upload "$RELEASE_TAG" SHA256SUMS.txt --repo Albert-AI-Technologies/releases --clobber
           cat SHA256SUMS.txt
