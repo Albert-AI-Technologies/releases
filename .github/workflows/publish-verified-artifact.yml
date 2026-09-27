@@ -1,0 +1,68 @@
+name: publish-verified-artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Verified candidate to add to v0.1.16
+        required: true
+        type: choice
+        options:
+          - mac-x64
+          - win-arm64
+      primary_sha256:
+        description: DMG or Windows installer SHA-256
+        required: true
+        type: string
+      zip_sha256:
+        description: Mac ZIP SHA-256 (Mac only)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ARTIFACT_URL: ${{ secrets.SOURCE_ARTIFACT_URL }}
+      PLATFORM: ${{ inputs.platform }}
+      PRIMARY_SHA256: ${{ inputs.primary_sha256 }}
+      ZIP_SHA256: ${{ inputs.zip_sha256 }}
+    steps:
+      - name: Fetch and verify private build artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_URL"
+          [[ "$ARTIFACT_URL" =~ ^https://productionresultssa[0-9]+\.blob\.core\.windows\.net/actions-results/ ]]
+          [[ "$PRIMARY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mkdir candidate
+          curl --fail --location --silent --show-error --connect-timeout 10 --max-time 180 "$ARTIFACT_URL" -o candidate.zip
+          unzip -q candidate.zip -d candidate
+          cd candidate
+          if [ "$PLATFORM" = mac-x64 ]; then
+            [[ "$ZIP_SHA256" =~ ^[0-9a-f]{64}$ ]]
+            printf '%s  %s\n' "$PRIMARY_SHA256" albert-studio-mac-x64.dmg "$ZIP_SHA256" albert-studio-mac-x64.zip | sha256sum -c -
+            diff -u SHA256SUMS.txt <(sha256sum albert-studio-mac-x64.dmg albert-studio-mac-x64.zip)
+          else
+            printf '%s  %s\n' "$PRIMARY_SHA256" albert-studio-win-arm64.exe | sha256sum -c -
+            diff -u <(tr -d '\r' < SHA256SUMS.txt) <(sha256sum albert-studio-win-arm64.exe)
+          fi
+
+      - name: Publish verified assets and combined checksum manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download v0.1.16 --pattern SHA256SUMS.txt --dir .
+          if [ "$PLATFORM" = mac-x64 ]; then
+            gh release upload v0.1.16 candidate/albert-studio-mac-x64.dmg candidate/albert-studio-mac-x64.zip --clobber
+          else
+            gh release upload v0.1.16 candidate/albert-studio-win-arm64.exe --clobber
+          fi
+          tr -d '\r' < candidate/SHA256SUMS.txt >> SHA256SUMS.txt
+          sort -k2,2 -u SHA256SUMS.txt -o SHA256SUMS.txt
+          gh release upload v0.1.16 SHA256SUMS.txt --clobber
+          cat SHA256SUMS.txt
